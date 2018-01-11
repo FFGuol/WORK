@@ -1,0 +1,109 @@
+select *
+  from (SELECT B.INSTANCE_ID,
+               B.CLASS_ID,
+               to_char(B.REQUEST_ID) REQUEST_ID,
+               B.DATASET_ID,
+               R.REGION_NAME,
+               B.SHORT_DESCRIPTION,
+               ct.class_name_cn,
+               I.CATEGORY_NAME,
+               B.MODEL_TEXT MODEL /*M.MODEL*/,
+               M.USED_CP_COUNT,
+               M.USED_CPU_COUNT,
+               ROUND(C.TOTAL_PHYSICAL_MEMORY / 1024 / 1024 / 1024, 2) TOTAL_PHYSICAL_MEMORY,
+               ROUND(M.TOTAL_DISK_SIZE / 1024 / 1024 / 1024, 2) TOTAL_DISK_SIZE,
+               PKP_CMDB_CONFIG.GETSHORTDESCRIPTIONS('DEST',
+                                                    B.INSTANCE_ID,
+                                                    (SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.IPEndpoint')
+                                                       FROM DUAL)) IP,
+               B.manufacturer_text COMPANY_NAME /*CO.COMPANY_NAME*/,
+               PKP_CMDB_CONFIG.GETSHORTDESCRIPTIONS('DEST',
+                                                    B.INSTANCE_ID,
+                                                    (SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.Rack')
+                                                       FROM DUAL)) RACK_NAME,
+               /*PKP_CMDB_CONFIG.GETSHORTDESCRIPTIONS('SOURCE',PKP_CMDB_CONFIG.getRelationCiId('DEST', B.INSTANCE_ID,(SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.Rack') FROM DUAL),'LOCATION'),(SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.Room') FROM DUAL), 'COMPONENT') ROOM_NAME,*/
+               PKP_CMDB_CONFIG.GETSHORTDESCRIPTIONS('DEST',
+                                                    B.INSTANCE_ID,
+                                                    (SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.BusinessApplication')
+                                                       FROM DUAL)) BS_NAME,
+               ST.LIST_LABEL SERVER_TYPE,
+               /*PKP_CMDB_CONFIG.GETSHORTDESCRIPTIONS('SOURCE', B.INSTANCE_ID, (SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.Staff')  FROM DUAL), 'OWNER') OWNER,*/
+               to_char(A.RECEIVED_DATED, 'yyyy-mm-dd') RECEIVED_DATED,
+               to_char(A.MAINTAIN_LIMIT, 'yyyy-mm-dd') MAINTAIN_LIMIT,
+               CP.COMPANY_NAME MAINTAINER,
+               B.SEARCH_CODE,
+               PKP_CMDB_CONFIG.GETSHORTDESCRIPTIONS('DEST',
+                                                    B.INSTANCE_ID,
+                                                    (SELECT PKP_CMDB_UTIL.GET_CI_CLASS_ID('core.Project')
+                                                       FROM DUAL)) PROJECT_NAME,
+               rownum as rn
+          FROM CI_BASE_ELEMENT B,
+               CI_COMPUTER_SYSTEM C,
+               CI_MAINFRAME M,
+               ASSET_INFO A,
+               CI_CATEGORY I,
+               MANAGE_REGION R,
+               ASSET_MODEL M,
+               COMPANY CO,
+               (SELECT CODE LIST_VALUE, MEAN LIST_LABEL
+                  FROM CODELIST
+                 WHERE CODE_TYPE = 'ASSET_SERVER_TYPE') ST,
+               COMPANY CP,
+               CI_CLASS_TREE ct
+         WHERE b.class_id = ct.class_id
+           and B.INSTANCE_ID = C.INSTANCE_ID
+           AND B.INSTANCE_ID = M.INSTANCE_ID
+           AND B.INSTANCE_ID = A.INSTANCE_ID
+           AND B.ITEM = I.CATEGORY_ID(+)
+           AND B.REGION_ID = R.REGION_ID(+)
+           AND B.MODEL_ID = M.ASSET_MODEL_ID(+)
+           AND B.MANUFACTURER_ID = CO.COMPANY_ID(+)
+           AND M.SERVER_TYPE = ST.LIST_VALUE(+)
+           AND A.MAINTAINER_ID = CP.COMPANY_ID(+)
+           AND B.MARKASDELETED = 0
+           AND B.DATASET_ID IN (2, 3)
+           AND (b.item in
+               (SELECT csvct.category_id
+                   FROM (SELECT t.tree_id
+                           FROM basic_tree_node t
+                          WHERE t.public_tree_key =
+                                'CI_TYPE_TREE_FOR_CI_ASSET_VIEW'
+                            AND t.state = '0SA'
+                            and tree_id in
+                                (select relation_id
+                                   from ne_view_cfg
+                                 connect by prior ne_item_id = parent_ne_item_id
+                                  start with ne_item_id = :tree_id)) btn,
+                        ci_sys_view_category_tree csvct
+                  WHERE btn.tree_id = csvct.tree_id) or
+               B.CLASS_ID IN
+               (SELECT CSVT.CI_CLASS_ID
+                   FROM (SELECT T.TREE_ID
+                           FROM BASIC_TREE_NODE T
+                          WHERE T.PUBLIC_TREE_KEY =
+                                'CI_TYPE_TREE_FOR_CI_ASSET_VIEW'
+                            AND T.STATE = '0SA'
+                            and tree_id in
+                                (select relation_id
+                                   from ne_view_cfg
+                                 connect by prior ne_item_id = parent_ne_item_id
+                                  start with ne_item_id = :tree_id)) BTN,
+                        CI_SYS_VIEW_TREE CSVT
+                  WHERE BTN.TREE_ID = CSVT.TREE_ID))
+           AND upper(B.SHORT_DESCRIPTION) like upper(:SHORT_DESCRIPTION)
+           AND upper(B.SEARCH_CODE) like upper(:SEARCH_CODE)
+           AND B.ITEM IN (SELECT CATEGORY_ID
+                            FROM CI_CATEGORY
+                          CONNECT BY PARENT_CATEGORY_ID = PRIOR CATEGORY_ID
+                           START WITH CATEGORY_ID = :CATEGORY_ID)
+           AND B.INSTANCE_ID IN
+               (select INSTANCE_ID
+                  from table(PKP_CMDB_CONFIG.getRelaCiIdByAppSystemId(:BUSI_ID)))
+           AND UPPER(CO.COMPANY_NAME) like UPPER(:MANUFACTURER_TEXT)
+           AND B.REGION_ID = :REGION_ID
+           AND B.STATUS = :STATUS
+           AND B.AUDIT_STATUS = :AUDIT_STATUS
+           AND B.MARKASDELETED = :MARKASDELETED
+           and B.MODEL_TEXT like :MODELTEXT
+           and SERIAL_NUMBER like :SERIALNUMBER)
+ where IP like :IP
